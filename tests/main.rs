@@ -51,7 +51,7 @@ impl<'b, T> Iterator for CdllIter<'b, T> {
 
         self.begun = true;
 
-        return Some(prev);
+        Some(prev)
     }
 }
 
@@ -62,10 +62,10 @@ impl<'b, T> Init for CdllNode<'b, T> {
             me.write(CdllNode {
                 data: arg,
                 next: Cell::new(
-                    (ptr::from_ref(me) as *const Self).as_ref().unwrap(),
+                    ptr::from_ref(me).cast::<Self>().as_ref().unwrap(),
                 ),
                 prev: Cell::new(
-                    (ptr::from_ref(me) as *const Self).as_ref().unwrap(),
+                    ptr::from_ref(me).cast::<Self>().as_ref().unwrap(),
                 ),
             });
         }
@@ -86,14 +86,14 @@ fn test_main() {
             }
 
             for (i, n) in node.iter().enumerate() {
-                assert!(100 - i == n.data)
+                assert!(100 - i == n.data);
             }
 
             node.iter().last().unwrap().data
-        }))
+        }));
     }
-    v.into_iter().for_each(|h| {
+    for h in v {
         let r = h.join();
         assert!(r.unwrap() == 0);
-    });
+    }
 }

@@ -3,18 +3,32 @@ pub use init::Init;
 
 mod init;
 
+type MemSlice<const SIZE: usize> = [u8; SIZE];
+
+#[derive(Clone, Copy)]
+struct Dropper<const SIZE: usize> {
+    place: usize,
+    func: fn(*mut MemSlice<SIZE>)
+}
+
 pub struct Arena<const SIZE: usize> {
-    backing_store: UnsafeCell<[u8; SIZE]>,
+    backing_store: UnsafeCell<MemSlice<SIZE>>,
     next_free_spot: AtomicUsize,
-    drop_queue: UnsafeCell<[Option<(usize, fn(*mut [u8; SIZE]))>; SIZE]>,
+    drop_queue: UnsafeCell<[Option<Dropper<SIZE>>; SIZE]>,
     next_free_drop_spot: AtomicUsize,
 }
 
 unsafe impl<const SIZE: usize> Sync for Arena<SIZE> {}
 unsafe impl<const SIZE: usize> Send for Arena<SIZE> {}
 
+impl<const SIZE: usize> Default for Arena<SIZE> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'a, const SIZE: usize> Arena<SIZE> {
-    pub const fn new() -> Self {
+    #[must_use] pub const fn new() -> Self {
         Arena {
             backing_store: UnsafeCell::new([0; SIZE]),
             next_free_spot: AtomicUsize::new(0),
@@ -33,7 +47,7 @@ impl<'a, const SIZE: usize> Arena<SIZE> {
         }
 
         let ptr = unsafe { self.backing_store.get().byte_add(place) };
-        let mptr = unsafe { (ptr as *mut MaybeUninit<T>).as_mut().unwrap() };
+        let mptr = unsafe { ptr.cast::<MaybeUninit<T>>().as_mut().unwrap() };
 
         Some((place, mptr))
     }
@@ -43,9 +57,9 @@ impl<'a, const SIZE: usize> Arena<SIZE> {
         dq[self
             .next_free_drop_spot
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)] =
-            Some((place, |ptr: *mut [u8; SIZE]| unsafe {
-                (ptr as *mut T).drop_in_place()
-            }));
+            Some(Dropper{ place, func: |ptr: *mut MemSlice<SIZE>| unsafe {
+                ptr.cast::<T>().drop_in_place();
+            }});
     }
 
     pub fn aquire_init_default<T: Init>(&'a self) -> Option<&'a T>
@@ -58,7 +72,7 @@ impl<'a, const SIZE: usize> Arena<SIZE> {
 
         self.add_to_drop_queue::<T>(place);
 
-        Some(unsafe { (ptr as *const _ as *const T).as_ref().unwrap() })
+        Some(unsafe { std::ptr::from_ref(ptr).cast::<T>().as_ref().unwrap_unchecked() })
     }
     pub fn aquire_init<T: Init>(&'a self, arg: T::InitArg) -> Option<&'a T> {
         let (place, ptr) = self.get_ptr_place::<T>()?;
@@ -67,7 +81,7 @@ impl<'a, const SIZE: usize> Arena<SIZE> {
 
         self.add_to_drop_queue::<T>(place);
 
-        Some(unsafe { (ptr as *const _ as *const T).as_ref().unwrap() })
+        Some(unsafe { std::ptr::from_ref(ptr).cast::<T>().as_ref().unwrap_unchecked() })
     }
 
     pub fn aquire_default<T: Default>(&'a self) -> Option<&'a T> {
@@ -77,7 +91,7 @@ impl<'a, const SIZE: usize> Arena<SIZE> {
 
         self.add_to_drop_queue::<T>(place);
 
-        Some(unsafe { (ptr as *const _ as *const T).as_ref().unwrap() })
+        Some(unsafe { std::ptr::from_ref(ptr).cast::<T>().as_ref().unwrap_unchecked() })
     }
     pub fn aquire<T>(&'a self, val: T) -> Option<&'a T> {
         let (place, ptr) = self.get_ptr_place::<T>()?;
@@ -86,18 +100,18 @@ impl<'a, const SIZE: usize> Arena<SIZE> {
 
         self.add_to_drop_queue::<T>(place);
 
-        Some(unsafe { (ptr as *const _ as *const T).as_ref().unwrap() })
+        Some(unsafe { std::ptr::from_ref(ptr).cast::<T>().as_ref().unwrap_unchecked() })
     }
 }
 
-impl<'a, const SIZE: usize> Drop for Arena<SIZE> {
+impl<const SIZE: usize> Drop for Arena<SIZE> {
     fn drop(&mut self) {
         for pair in self.drop_queue.get_mut() {
-            let Some((place, dropper)) = pair else {
+            let Some(Dropper{place, func}) = pair else {
                 continue;
             };
-            let ptr = unsafe { self.backing_store.get().byte_add(*place) as *mut [u8; SIZE] };
-            dropper(ptr)
+            let ptr = unsafe { self.backing_store.get().byte_add(*place)};
+            func(ptr);
         }
     }
 }
@@ -113,12 +127,12 @@ mod test {
     #[test]
     fn test_aquire() {
         let two = ARENA.aquire(2).unwrap();
-        assert!(*two == 2)
+        assert!(*two == 2);
     }
     #[test]
     fn test_aquire_default() {
         let zero = ARENA.aquire_default::<usize>().unwrap();
-        assert!(*zero == 0)
+        assert!(*zero == 0);
     }
     struct CdllNode<'b, T> {
         data: T,
@@ -141,8 +155,8 @@ mod test {
             unsafe {
                 me.write(CdllNode {
                     data: arg,
-                    next: Cell::new((ptr::from_ref(me) as *const Self).as_ref().unwrap()),
-                    prev: Cell::new((ptr::from_ref(me) as *const Self).as_ref().unwrap()),
+                    next: Cell::new(ptr::from_ref(me).cast::<Self>().as_ref().unwrap()),
+                    prev: Cell::new(ptr::from_ref(me).cast::<Self>().as_ref().unwrap()),
                 });
             }
         }
@@ -152,13 +166,13 @@ mod test {
     fn test_aquire_init() {
         let n = ARENA.aquire_init::<CdllNode<usize>>(1).unwrap();
         assert!(n.data == 1);
-        assert!(n.next.get().data == 1)
+        assert!(n.next.get().data == 1);
     }
     #[test]
     fn test_aquire_init_default() {
         let n = ARENA.aquire_init_default::<CdllNode<usize>>().unwrap();
         assert!(n.data == 0);
-        assert!(n.next.get().data == 0)
+        assert!(n.next.get().data == 0);
     }
 
     #[test]
@@ -178,13 +192,13 @@ mod test {
 
     impl Test {
         fn hi(&self) -> &str {
-            return "hi";
+            "hi"
         }
     }
 
     impl Drop for Test {
         fn drop(&mut self) {
-            TEST_DROPPED.store(true, std::sync::atomic::Ordering::Release)
+            TEST_DROPPED.store(true, std::sync::atomic::Ordering::Release);
         }
     }
 
@@ -193,7 +207,7 @@ mod test {
         let z0 = ARENA.aquire_default::<Test>().unwrap();
         let z = ARENA.aquire_default::<Test>().unwrap();
         assert!(z.hi() == "hi");
-        assert!(z0.hi() == "hi")
+        assert!(z0.hi() == "hi");
     }
 
     #[test]
@@ -201,6 +215,6 @@ mod test {
         let arena = Arena::<1>::new();
         let _z = arena.aquire_default::<Test>().unwrap();
         drop(arena);
-        assert!(TEST_DROPPED.load(std::sync::atomic::Ordering::Acquire))
+        assert!(TEST_DROPPED.load(std::sync::atomic::Ordering::Acquire));
     }
 }
