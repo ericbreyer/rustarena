@@ -1,6 +1,9 @@
 [package]
-name = "playground"
+name = "arena-alloc"
 version = "0.1.0"
 edition = "2021"
+license = "GPL-3.0-or-later"
+description = "A small arena allocator with a static backing store and ability to allocate arbitrary types."
+repository = "https://github.com/ericbreyer/rustarena"
 
 [dependencies]
