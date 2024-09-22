@@ -1,8 +1,7 @@
 #[cfg(test)]
-
 use std::{cell::Cell, mem::MaybeUninit, ptr, sync::Arc};
 
-use playground::{Arena,  Init};
+use arena_alloc::{Arena, Init};
 
 struct CdllNode<'b, T> {
     data: T,
@@ -61,12 +60,8 @@ impl<'b, T> Init for CdllNode<'b, T> {
         unsafe {
             me.write(CdllNode {
                 data: arg,
-                next: Cell::new(
-                    ptr::from_ref(me).cast::<Self>().as_ref().unwrap(),
-                ),
-                prev: Cell::new(
-                    ptr::from_ref(me).cast::<Self>().as_ref().unwrap(),
-                ),
+                next: Cell::new(ptr::from_ref(me).cast::<Self>().as_ref().unwrap()),
+                prev: Cell::new(ptr::from_ref(me).cast::<Self>().as_ref().unwrap()),
             });
         }
     }
@@ -79,10 +74,10 @@ fn test_main() {
     for _ in 0..10 {
         let arena = Arc::clone(&arena);
         v.push(std::thread::spawn(move || {
-            let node: &CdllNode<usize> = arena.aquire_init(100).unwrap();
+            let node: &CdllNode<usize> = arena.acquire_init(100).unwrap();
 
             for i in 0..100 {
-                node.insert(arena.aquire_init(i).unwrap());
+                node.insert(arena.acquire_init(i).unwrap());
             }
 
             for (i, n) in node.iter().enumerate() {

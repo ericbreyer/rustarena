@@ -1,17 +1,17 @@
-use std::{cell::Cell, ptr, sync::atomic::AtomicBool};
+use core::{cell::Cell, ptr, sync::atomic::AtomicBool};
 
 use super::*;
 
 static ARENA: Arena<1000> = Arena::new();
 
 #[test]
-fn test_aquire() {
-    let two = ARENA.aquire(2).unwrap();
+fn test_acquire() {
+    let two = ARENA.acquire(2).unwrap();
     assert!(*two == 2);
 }
 #[test]
-fn test_aquire_default() {
-    let zero = ARENA.aquire_default::<usize>().unwrap();
+fn test_acquire_default() {
+    let zero = ARENA.acquire_default::<usize>().unwrap();
     assert!(*zero == 0);
 }
 struct CdllNode<'b, T> {
@@ -43,22 +43,22 @@ impl<'b, T> Init for CdllNode<'b, T> {
 }
 
 #[test]
-fn test_aquire_init() {
-    let n = ARENA.aquire_init::<CdllNode<usize>>(1).unwrap();
+fn test_acquire_init() {
+    let n = ARENA.acquire_init::<CdllNode<usize>>(1).unwrap();
     assert!(n.data == 1);
     assert!(n.next.get().data == 1);
 }
 #[test]
-fn test_aquire_init_default() {
-    let n = ARENA.aquire_init_default::<CdllNode<usize>>().unwrap();
+fn test_acquire_init_default() {
+    let n = ARENA.acquire_init_default::<CdllNode<usize>>().unwrap();
     assert!(n.data == 0);
     assert!(n.next.get().data == 0);
 }
 
 #[test]
 fn test_interlinking_reference() {
-    let n = ARENA.aquire_init_default::<CdllNode<usize>>().unwrap();
-    n.insert(ARENA.aquire_init::<CdllNode<usize>>(1).unwrap());
+    let n = ARENA.acquire_init_default::<CdllNode<usize>>().unwrap();
+    n.insert(ARENA.acquire_init::<CdllNode<usize>>(1).unwrap());
 
     assert!(n.data == 0);
     assert!(n.next.get().data == 1);
@@ -78,14 +78,14 @@ impl Test {
 
 impl Drop for Test {
     fn drop(&mut self) {
-        TEST_DROPPED.store(true, std::sync::atomic::Ordering::Release);
+        TEST_DROPPED.store(true, Ordering::Release);
     }
 }
 
 #[test]
 fn test_zero_size() {
-    let z0 = ARENA.aquire_default::<Test>().unwrap();
-    let z = ARENA.aquire_default::<Test>().unwrap();
+    let z0 = ARENA.acquire_default::<Test>().unwrap();
+    let z = ARENA.acquire_default::<Test>().unwrap();
     assert!(z.hi() == "hi");
     assert!(z0.hi() == "hi");
 }
@@ -93,7 +93,7 @@ fn test_zero_size() {
 #[test]
 fn test_drop() {
     let arena = Arena::<1>::new();
-    let _z = arena.aquire_default::<Test>().unwrap();
+    let _z = arena.acquire_default::<Test>().unwrap();
     drop(arena);
-    assert!(TEST_DROPPED.load(std::sync::atomic::Ordering::Acquire));
+    assert!(TEST_DROPPED.load(Ordering::Acquire));
 }
